@@ -167,6 +167,18 @@ Standard SQL operator precedence applies (highest to lowest):
 7. Logical AND: `AND`  
 8. Logical OR: `OR`
 
+### Division
+
+`/` is true division: the result is not truncated, also when both operands are integers. `5 / 2` is `2.5`, and `-5 / 2` is `-2.5`. The type and scale of the result are engine-defined. Implementations MUST produce this result whatever the native behavior of the engine; see [Rounding and Division](#rounding-and-division).
+
+To keep only the integer part of a quotient, write it explicitly: `TRUNC(x / y, 0)` rounds toward zero, `FLOOR(x / y)` rounds toward negative infinity.
+
+```sql
+-- units is an integer column, and COUNT returns an integer
+SUM(units) / COUNT(order_id)            -- 7 / 2 = 3.5
+TRUNC(SUM(units) / COUNT(order_id), 0)  -- 3
+```
+
 ---
 
 ## Aggregation Functions
@@ -507,6 +519,16 @@ Pattern wildcards for `LIKE`:
 | `MOD` | `MOD(x, y)` | Modulo (remainder) |
 | `SIGN` | `SIGN(x)` | Sign (-1, 0, or 1\) |
 
+`ROUND(x, d)` rounds a tie, a value exactly halfway between the two candidates, away from zero. Implementations MUST produce this result whatever the native rounding of the engine; see [Rounding and Division](#rounding-and-division).
+
+```sql
+ROUND(2.5, 0)    -- 3
+ROUND(-2.5, 0)   -- -3
+ROUND(0.125, 2)  -- 0.13
+```
+
+The rule is about exact ties. A floating-point value often does not hold exactly the decimal it was written as, so it may not be a tie at all.
+
 ### Advanced Math (REQUIRED)
 
 | Function | Syntax | Description |
@@ -829,6 +851,27 @@ date range. For a row-level shift, add a number of days to the date directly, or
 | `RUNNING_SUM(...)` | `RUNNING_SUM(SUM(...))` | N/A | `CALCULATE(SUM(...), FILTER(...))` | `RunningSum(...)` — same UI-configuration caveat |
 
 Sigma's table-calculation functions (`RowNumber`, `Rank`, `RunningSum`, `RunningAvg`, `Lag`, `Lead`, etc.) resolve their partition/order context from workbook UI configuration (which pivot/table the calculation is attached to) rather than from arguments passed in the formula text itself. Because that context isn't recoverable from the formula string alone, the [Sigma converter](https://github.com/apache/ossie-converters/tree/main/sigma) treats these as untranslatable to ANSI SQL and carries the original Sigma formula through in the `SIGMA` dialect only — see its [`LIMITATIONS.md`](https://github.com/apache/ossie-converters/blob/main/sigma/LIMITATIONS.md).
+
+---
+
+## Rounding and Division
+
+An implementation produces the `ROUND` and `/` results defined above as follows:
+
+- `ROUND`: where the native `ROUND` of the engine breaks ties another way for the type of `x`, it casts `x` to an exact numeric type that holds it exactly, then rounds. Every engine in the table below that has an exact numeric type already rounds its ties away from zero.
+- `/`: where the native `/` truncates when both operands are integers, it casts one operand to an exact numeric or floating-point type first, for example `CAST(x AS DECIMAL(38, 6)) / y`.
+
+Native behavior:
+
+| Engine | `ROUND` tie, exact numeric | `ROUND` tie, floating point | `5 / 2` |
+| :---- | :---- | :---- | :---- |
+| BigQuery | away from zero | away from zero | `2.5` (`FLOAT64`) |
+| ClickHouse | away from zero | to even | `2.5` (`Float64`) |
+| Databricks | away from zero | away from zero | `2.5` |
+| DuckDB | away from zero | away from zero | `2.5` (`DOUBLE`) |
+| PostgreSQL | away from zero | platform-dependent, usually to even | `2` |
+| Snowflake | away from zero | not specified | `2.500000` |
+| SQLite | no exact numeric type | away from zero | `2` |
 
 ---
 
